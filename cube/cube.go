@@ -13,32 +13,51 @@ type Sample struct {
 	R, G, B float64
 }
 
-func (s Sample) Blend(s2 Sample) Sample {
-	return Sample{
-		R: s.R + s2.R,
-		G: s.G + s2.G,
-		B: s.B + s2.B,
-	}
+func (s *Sample) Sum(s2 Sample) *Sample {
+	s.R += s2.R
+	s.G += s2.G
+	s.B += s2.B
+	return s
 }
 
-func (s Sample) Clamp(min, max Sample) Sample {
-	return Sample{
-		R: (s.R - min.R) / (max.R - min.R),
-		G: (s.G - min.G) / (max.G - min.G),
-		B: (s.B - min.B) / (max.B - min.B),
-	}
+func (s *Sample) Blend(s2 Sample, w1, w2 float64) *Sample {
+	s.R = s.R*w1 + s2.R*w2
+	s.G = s.G*w1 + s2.G*w2
+	s.B = s.B*w1 + s2.B*w2
+	return s
 }
 
-func (s Sample) Scale(v float64) Sample {
-	return Sample{
-		R: s.R * v,
-		G: s.G * v,
-		B: s.B * v,
-	}
+func (s *Sample) Clamp(min, max Sample) *Sample {
+	s.R = (s.R - min.R) / (max.R - min.R)
+	s.G = (s.G - min.G) / (max.G - min.G)
+	s.B = (s.B - min.B) / (max.B - min.B)
+	return s
+}
+
+func (s *Sample) Scale(v float64) *Sample {
+	s.R *= v
+	s.G *= v
+	s.B *= v
+	return s
 }
 
 func (s Sample) String() string {
 	return fmt.Sprintf("%f %f %f", s.R, s.G, s.B)
+}
+
+func (s *Sample) Rescale(minVal, maxVal float64, domainMin, domainMax Sample) *Sample {
+	if maxVal == minVal {
+		s.R = domainMin.R + (domainMax.R-domainMin.R)/2
+		s.G = domainMin.G + (domainMax.G-domainMin.G)/2
+		s.B = domainMin.B + (domainMax.B-domainMin.B)/2
+		return s
+	}
+
+	globalRange := maxVal - minVal
+	s.R = domainMin.R + (s.R-minVal)/globalRange*(domainMax.R-domainMin.R)
+	s.G = domainMin.G + (s.G-minVal)/globalRange*(domainMax.G-domainMin.G)
+	s.B = domainMin.B + (s.B-minVal)/globalRange*(domainMax.B-domainMin.B)
+	return s
 }
 
 type Cube struct {
@@ -97,20 +116,20 @@ func (c Cube) WriteTo(w io.Writer) (n int64, err error) {
 	return
 }
 
-func (c Cube) Scale(v float64) Cube {
+func (c *Cube) Scale(v float64) *Cube {
 	if v <= 0 || v > 1 {
 		return c
 	}
 
-	for i, s := range c.Samples {
-		c.Samples[i] = s.Scale(v)
+	for i := range c.Samples {
+		c.Samples[i].Scale(v)
 	}
 	return c
 }
 
-func (c Cube) Clamp() Cube {
-	for i, s := range c.Samples {
-		c.Samples[i] = s.Clamp(c.DomainMin, c.DomainMax)
+func (c *Cube) Clamp() *Cube {
+	for i := range c.Samples {
+		c.Samples[i].Clamp(c.DomainMin, c.DomainMax)
 	}
 	return c
 }
@@ -121,7 +140,21 @@ var (
 	ErrUnrecognisedLine    = errors.New("unrecognised line")
 )
 
-func (c Cube) Blend(c2 Cube) (Cube, error) {
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func (c *Cube) Sum(c2 Cube) (*Cube, error) {
 	if len(c.Samples) == 0 || len(c2.Samples) == 0 {
 		return c, ErrEmptyLut
 	}
@@ -130,27 +163,71 @@ func (c Cube) Blend(c2 Cube) (Cube, error) {
 		return c, ErrDifferentSampleSize
 	}
 
-	for i, s := range c.Samples {
-		c.Samples[i] = s.Blend(c2.Samples[i])
+	for i := range c.Samples {
+		c.Samples[i].Sum(c2.Samples[i])
 	}
 	return c, nil
 }
 
-func (c Cube) MustBlend(c2 Cube) Cube {
-	ret, err := c.Blend(c2)
+// Blend does a weighted blend of two LUTs using the two intensities
+// i1 and i2 provided in input.
+func (c *Cube) Blend(c2 Cube, i1, i2 float64) (*Cube, error) {
+	if len(c.Samples) == 0 || len(c2.Samples) == 0 {
+		return c, ErrEmptyLut
+	}
+
+	if len(c.Samples) != len(c2.Samples) {
+		return c, ErrDifferentSampleSize
+	}
+
+	total := i1 + i2
+	w1 := i1 / total
+	w2 := i2 / total
+
+	for i := range c.Samples {
+		c.Samples[i].Blend(c2.Samples[i], w1, w2)
+	}
+	return c, nil
+}
+
+func (c *Cube) MustBlend(c2 Cube, i1, i2 float64) *Cube {
+	ret, err := c.Blend(c2, i1, i2)
 	if err != nil {
 		panic(err)
 	}
 	return ret
 }
 
-func parseSample(line, prefix string, s *Sample) error {
-	var r, g, b float64
-	_, err := fmt.Sscanf(line, prefix+" %f %f %f", &r, &g, &b)
-	if err == nil {
-		*s = Sample{R: r, G: g, B: b}
+func (c *Cube) MustSum(c2 Cube) *Cube {
+	ret, err := c.Sum(c2)
+	if err != nil {
+		panic(err)
 	}
-	return err
+	return ret
+}
+
+func (c Cube) minmax() (minVal, maxVal float64) {
+	if len(c.Samples) == 0 {
+		return 0, 1
+	}
+
+	minVal = c.Samples[0].R
+	maxVal = c.Samples[0].R
+	for _, s := range c.Samples {
+		minVal = min(minVal, min(min(s.R, s.G), s.B))
+		maxVal = max(maxVal, max(max(s.R, s.G), s.B))
+	}
+	return
+}
+
+func (c *Cube) Rescale() *Cube {
+	minVal, maxVal := c.minmax()
+
+	for i := range c.Samples {
+		c.Samples[i].Rescale(minVal, maxVal, c.DomainMin, c.DomainMax)
+	}
+
+	return c
 }
 
 func Load(r io.Reader) (Cube, error) {
@@ -240,5 +317,7 @@ func LoadFile(path string) (Cube, error) {
 	if err != nil {
 		return Cube{}, err
 	}
+	defer f.Close()
+
 	return Load(f)
 }
