@@ -99,15 +99,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Manipulate the LUT
-	lut.Scale(0.8)
-	lut.Clamp()
-
-	// Write it back
-	err = lut.WriteTo(os.Stdout)
+	// Manipulate the LUT abd write it back
+	err = lut.Scale(0.8).Clamp().WriteTo(os.Stdout)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Or if you want to be the boring guy:
+	// lut.Scale(0.8)
+	// lut.Clamp()
+	// err = lut.WriteTo(os.Stdout)
 }
 ```
 
