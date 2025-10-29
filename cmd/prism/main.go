@@ -32,7 +32,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "blend":
-		a1, a2, _ := parseBlendFlags()
+		a1, a2, cfg := parseBlendFlags()
 		p1, i1 := pathAndIntensity(a1)
 		p2, i2 := pathAndIntensity(a2)
 
@@ -48,7 +48,21 @@ func main() {
 			os.Exit(1)
 		}
 
-		fmt.Println(c1.MustBlend(c2, i1, i2))
+		c1.MustBlend(c2, i1, i2)
+
+		if cfg.output == "" {
+			fmt.Println(c1)
+			return
+		}
+
+		f, err := os.OpenFile(cfg.output, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		c1.WriteTo(f)
+		return
 	}
 }
 
