@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
 	"io"
 	"os"
 	"strings"
+	"sync"
 )
 
 type Sample struct {
@@ -228,6 +231,159 @@ func (c *Cube) Rescale() *Cube {
 	}
 
 	return c
+}
+
+// interpolate performs trilinear interpolation in the 3D LUT
+func (c Cube) interpolate(r, g, b float64) Sample {
+	size := float64(c.LUT3Dsize - 1)
+
+	// Normalize input to cube coordinates [0, size]
+	rIdx := (r - c.DomainMin.R) / (c.DomainMax.R - c.DomainMin.R) * size
+	gIdx := (g - c.DomainMin.G) / (c.DomainMax.G - c.DomainMin.G) * size
+	bIdx := (b - c.DomainMin.B) / (c.DomainMax.B - c.DomainMin.B) * size
+
+	// Clamp to valid range
+	rIdx = max(0, min(size, rIdx))
+	gIdx = max(0, min(size, gIdx))
+	bIdx = max(0, min(size, bIdx))
+
+	// Find the surrounding cube vertices
+	r0 := int(rIdx)
+	g0 := int(gIdx)
+	b0 := int(bIdx)
+
+	r1 := min(float64(r0+1), size)
+	g1 := min(float64(g0+1), size)
+	b1 := min(float64(b0+1), size)
+
+	// Calculate interpolation weights
+	rFrac := rIdx - float64(r0)
+	gFrac := gIdx - float64(g0)
+	bFrac := bIdx - float64(b0)
+
+	// Get the 8 corner samples
+	c000 := c.getSample(r0, g0, b0)
+	c001 := c.getSample(r0, g0, int(b1))
+	c010 := c.getSample(r0, int(g1), b0)
+	c011 := c.getSample(r0, int(g1), int(b1))
+	c100 := c.getSample(int(r1), g0, b0)
+	c101 := c.getSample(int(r1), g0, int(b1))
+	c110 := c.getSample(int(r1), int(g1), b0)
+	c111 := c.getSample(int(r1), int(g1), int(b1))
+
+	// Trilinear interpolation
+	// First interpolate along r
+	c00 := interpolateSamples(c000, c100, rFrac)
+	c01 := interpolateSamples(c001, c101, rFrac)
+	c10 := interpolateSamples(c010, c110, rFrac)
+	c11 := interpolateSamples(c011, c111, rFrac)
+
+	// Then interpolate along g
+	c0 := interpolateSamples(c00, c10, gFrac)
+	c1 := interpolateSamples(c01, c11, gFrac)
+
+	// Finally interpolate along b
+	return interpolateSamples(c0, c1, bFrac)
+}
+
+// getSample retrieves a sample from the 3D LUT at the given indices
+func (c Cube) getSample(r, g, b int) Sample {
+	idx := r + g*c.LUT3Dsize + b*c.LUT3Dsize*c.LUT3Dsize
+	if idx >= len(c.Samples) {
+		return Sample{R: 0, G: 0, B: 0}
+	}
+	return c.Samples[idx]
+}
+
+// interpolateSamples linearly interpolates between two samples
+func interpolateSamples(s1, s2 Sample, t float64) Sample {
+	return Sample{
+		R: s1.R + t*(s2.R-s1.R),
+		G: s1.G + t*(s2.G-s1.G),
+		B: s1.B + t*(s2.B-s1.B),
+	}
+}
+
+func (c Cube) Apply(img image.Image) *image.RGBA {
+	return c.ApplyScaled(img, 1.0)
+}
+
+func (c Cube) ApplyScaled(img image.Image, intensity float64) *image.RGBA {
+	bounds := img.Bounds()
+	out := image.NewRGBA(bounds)
+
+	// Clamp intensity to [0, 1]
+	intensity = max(0, min(1, intensity))
+
+	// Pre-compute domain ranges to avoid recalculation
+	domainRangeR := c.DomainMax.R - c.DomainMin.R
+	domainRangeG := c.DomainMax.G - c.DomainMin.G
+	domainRangeB := c.DomainMax.B - c.DomainMin.B
+
+	var wg sync.WaitGroup
+
+	// Process each row in parallel
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		wg.Go(func() {
+			c.processRowScaled(
+				img,
+				out,
+				bounds,
+				y,
+				domainRangeR,
+				domainRangeG,
+				domainRangeB,
+				intensity,
+			)
+		})
+	}
+
+	wg.Wait()
+	return out
+}
+
+// processRowScaled processes a single row of the image with intensity blending
+func (c Cube) processRowScaled(img image.Image, out *image.RGBA, bounds image.Rectangle, y int, domainRangeR, domainRangeG, domainRangeB, intensity float64) {
+	for x := bounds.Min.X; x < bounds.Max.X; x++ {
+		r, g, b, a := img.At(x, y).RGBA()
+
+		// Convert from uint32 (0-65535) to float64 (0-1)
+		rNorm := float64(r) / 65535.0
+		gNorm := float64(g) / 65535.0
+		bNorm := float64(b) / 65535.0
+
+		// Map to LUT domain
+		rLut := c.DomainMin.R + rNorm*domainRangeR
+		gLut := c.DomainMin.G + gNorm*domainRangeG
+		bLut := c.DomainMin.B + bNorm*domainRangeB
+
+		// Apply LUT using trilinear interpolation
+		result := c.interpolate(rLut, gLut, bLut)
+
+		// Blend between original (identity) and LUT result
+		// Identity in LUT domain space is just the input color
+		blendedR := rLut*(1-intensity) + result.R*intensity
+		blendedG := gLut*(1-intensity) + result.G*intensity
+		blendedB := bLut*(1-intensity) + result.B*intensity
+
+		// Map back from LUT domain to [0, 1]
+		rOut := (blendedR - c.DomainMin.R) / domainRangeR
+		gOut := (blendedG - c.DomainMin.G) / domainRangeG
+		bOut := (blendedB - c.DomainMin.B) / domainRangeB
+
+		// Clamp to [0, 1]
+		rOut = max(0, min(1, rOut))
+		gOut = max(0, min(1, gOut))
+		bOut = max(0, min(1, bOut))
+
+		// Convert back to uint8
+		out.SetRGBA(x, y, color.RGBA{
+			R: uint8(rOut * 255),
+			G: uint8(gOut * 255),
+			B: uint8(bOut * 255),
+			A: uint8(a / 257), // Convert from uint32 to uint8
+		})
+	}
 }
 
 func Load(r io.Reader) (Cube, error) {
