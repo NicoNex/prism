@@ -42,7 +42,13 @@ func blend() error {
 		return err
 	}
 
-	c1.MustBlend(c2, opt.ilut1, opt.ilut2)
+	if _, err := c1.Blend(c2, opt.ilut1, opt.ilut2); err != nil {
+		return err
+	}
+
+	if opt.title != "" {
+		c1.Title = opt.title
+	}
 
 	if opt.output == "" {
 		fmt.Println(c1)
