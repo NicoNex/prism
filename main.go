@@ -131,15 +131,12 @@ func convert() error {
 			return err
 		}
 
-		id := hald.Identity(c.LUT3Dsize)
-		img := c.Apply(id)
-
 		f, err := os.Create(opt.output)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		return png.Encode(f, img)
+		return png.Encode(f, c.Apply(hald.Identity(12)))
 
 	case lutExt == ".png" && outExt == ".cube":
 		fallthrough
