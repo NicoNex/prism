@@ -72,8 +72,8 @@ func interpolateSamples(c1, c2 color.Color, t float64) (r, g, b float64) {
 	return r1 + t*(r2-r1), g1 + t*(g2-g1), b1 + t*(b2-b1)
 }
 
-// interpolate performs trilinear interpolation in the 3D HALD LUT
-func (h HALD) interpolate(r, g, b float64) (float64, float64, float64) {
+// Interpolate performs trilinear interpolation in the 3D HALD LUT
+func (h HALD) Interpolate(r, g, b float64) (float64, float64, float64) {
 	cubeF := float64(h.level*h.level - 1) // N² - 1
 
 	rIdx := r * cubeF
@@ -169,7 +169,7 @@ func (h HALD) processRowScaled(img image.Image, out *image.RGBA, bounds image.Re
 		bNorm := float64(b) / 65535.0
 
 		// Apply HALD using trilinear interpolation
-		resultR, resultG, resultB := h.interpolate(rNorm, gNorm, bNorm)
+		resultR, resultG, resultB := h.Interpolate(rNorm, gNorm, bNorm)
 
 		// Blend between original (identity) and HALD result
 		blendedR := rNorm*(1-intensity) + resultR*intensity

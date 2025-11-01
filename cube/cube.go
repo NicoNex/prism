@@ -273,17 +273,17 @@ func (c Cube) interpolate(r, g, b float64) Sample {
 
 	// Trilinear interpolation
 	// First interpolate along r
-	c00 := interpolateSamples(c000, c100, rFrac)
-	c01 := interpolateSamples(c001, c101, rFrac)
-	c10 := interpolateSamples(c010, c110, rFrac)
-	c11 := interpolateSamples(c011, c111, rFrac)
+	c00 := interpolateSample(c000, c100, rFrac)
+	c01 := interpolateSample(c001, c101, rFrac)
+	c10 := interpolateSample(c010, c110, rFrac)
+	c11 := interpolateSample(c011, c111, rFrac)
 
 	// Then interpolate along g
-	c0 := interpolateSamples(c00, c10, gFrac)
-	c1 := interpolateSamples(c01, c11, gFrac)
+	c0 := interpolateSample(c00, c10, gFrac)
+	c1 := interpolateSample(c01, c11, gFrac)
 
 	// Finally interpolate along b
-	return interpolateSamples(c0, c1, bFrac)
+	return interpolateSample(c0, c1, bFrac)
 }
 
 // getSample retrieves a sample from the 3D LUT at the given indices
@@ -295,8 +295,8 @@ func (c Cube) getSample(r, g, b int) Sample {
 	return c.Samples[idx]
 }
 
-// interpolateSamples linearly interpolates between two samples
-func interpolateSamples(s1, s2 Sample, t float64) Sample {
+// interpolateSample linearly interpolates between two samples
+func interpolateSample(s1, s2 Sample, t float64) Sample {
 	return Sample{
 		R: s1.R + t*(s2.R-s1.R),
 		G: s1.G + t*(s2.G-s1.G),

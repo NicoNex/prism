@@ -139,7 +139,52 @@ func convert() error {
 		return png.Encode(f, c.Apply(hald.Identity(12)))
 
 	case lutExt == ".png" && outExt == ".cube":
-		fallthrough
+		hld, err := hald.LoadFile(opt.lut)
+		if err != nil {
+			return err
+		}
+
+		const (
+			lutSize  = 33
+			lutSizeF = float64(lutSize - 1)
+		)
+
+		c := cube.Cube{
+			Title:     opt.title,
+			LUT3Dsize: lutSize,
+			DomainMin: cube.Sample{R: 0, G: 0, B: 0},
+			DomainMax: cube.Sample{R: 1, G: 1, B: 1},
+			Samples:   make([]cube.Sample, lutSize*lutSize*lutSize),
+		}
+
+		if c.Title == "" {
+			c.Title = opt.lut[:len(opt.lut)-len(lutExt)]
+		}
+
+		// Sample the HALD at each CUBE position
+		for b := 0; b < lutSize; b++ {
+			for g := 0; g < lutSize; g++ {
+				for r := 0; r < lutSize; r++ {
+					idx := r + g*lutSize + b*lutSize*lutSize
+
+					s := &c.Samples[idx]
+					s.R, s.G, s.B = hld.Interpolate(
+						float64(r)/lutSizeF,
+						float64(g)/lutSizeF,
+						float64(b)/lutSizeF,
+					)
+				}
+			}
+		}
+
+		f, err := os.Create(opt.output)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = c.WriteTo(f)
+		return err
+
 	default:
 		return fmt.Errorf("unsupported conversion from %q to %q", lutExt, outExt)
 	}
@@ -173,15 +218,18 @@ func main() {
 type convertOpt struct {
 	lut    string
 	output string
+	title  string
 }
 
 func parseConvertOpts() (opt convertOpt) {
-	if len(os.Args) < 4 {
-		// TODO: print usage.
-		os.Exit(1)
-	}
+	cmd := flag.NewFlagSet("convert", flag.ExitOnError)
+	cmd.StringVar(&opt.title, "t", "", "Specify the title to use for the generated lut")
+	cmd.StringVar(&opt.title, "title", "", "Specify the title to use for the generated lut (same as -t)")
+	cmd.Parse(os.Args[2:])
 
-	return convertOpt{os.Args[2], os.Args[3]}
+	opt.lut = cmd.Arg(0)
+	opt.output = cmd.Arg(1)
+	return
 }
 
 type applyOpt struct {
@@ -205,6 +253,7 @@ func parseApplyOpts() (opt applyOpt) {
 type blendOpt struct {
 	clamp  bool
 	output string
+	title  string
 	lut1   string
 	lut2   string
 	ilut1  float64
@@ -216,7 +265,9 @@ func parseBlendOpts() (opt blendOpt) {
 	cmd.BoolVar(&opt.clamp, "c", true, "Clamp the blended LUT")
 	cmd.BoolVar(&opt.clamp, "clamp", true, "Clamp the blended LUT (same as -c)")
 	cmd.StringVar(&opt.output, "o", "", "Write the output in the given file")
-	cmd.StringVar(&opt.output, "out", "", "Write the output in the given file")
+	cmd.StringVar(&opt.output, "out", "", "Write the output in the given file (same as -o)")
+	cmd.StringVar(&opt.title, "t", "", "Specify the title to use for the generated lut")
+	cmd.StringVar(&opt.title, "title", "", "Specify the title to use for the generated lut (same as -t)")
 	cmd.Parse(os.Args[2:])
 
 	opt.lut1, opt.ilut1 = pathAndIntensity(cmd.Arg(0))
