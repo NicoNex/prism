@@ -12,7 +12,7 @@ import (
 )
 
 type HALD struct {
-	img   image.Image
+	image.Image
 	level int
 }
 
@@ -43,7 +43,7 @@ func newHALD(img image.Image) (HALD, error) {
 	}
 
 	return HALD{
-		img:   img,
+		Image: img,
 		level: level,
 	}, nil
 }
@@ -59,7 +59,7 @@ func (h HALD) getSample(r, g, b int) color.Color {
 	x := b*h.level + r
 	y := g * h.level
 
-	return h.img.At(x+h.img.Bounds().Min.X, y+h.img.Bounds().Min.Y)
+	return h.Image.At(x+h.Image.Bounds().Min.X, y+h.Image.Bounds().Min.Y)
 }
 
 // colorToFloat64 converts an image color to float64 RGB values in range [0, 1]
@@ -208,7 +208,10 @@ func (h HALD) processRowScaled(img image.Image, out *image.RGBA, bounds image.Re
 // Identity creates a neutral/identity HALD of the given level.
 // An identity HALD returns each input color unchanged.
 func Identity(level int) HALD {
-	width := level * level * level
+	// getSample maps (r, g, b) to (x, y) as:
+	// x = b*level + r (ranges from 0 to level²-1)
+	// y = g*level (ranges from 0 to level²-1 in steps of level)
+	width := level * level
 	height := level * level
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 
@@ -216,9 +219,12 @@ func Identity(level int) HALD {
 
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
+			// Extract 3D coordinates from 2D position
+			// Given getSample: x = b*level + r, y = g*level
+			// We reverse to get: r = x % level, b = x / level, g = y / level
 			r := x % level
-			g := y / level
 			b := x / level
+			g := y / level
 
 			// Normalize to 0-1 range, then to 0-255
 			rVal := uint8((float64(r) / levelF) * 255)
@@ -229,7 +235,7 @@ func Identity(level int) HALD {
 		}
 	}
 
-	return HALD{img: img, level: level}
+	return HALD{Image: img, level: level}
 }
 
 // Load reads a HALD LUT from a PNG image reader
@@ -256,9 +262,4 @@ func LoadFile(path string) (HALD, error) {
 // Level returns the HALD level of this LUT
 func (h HALD) Level() int {
 	return h.level
-}
-
-// Bounds returns the image bounds of the HALD LUT
-func (h HALD) Bounds() image.Rectangle {
-	return h.img.Bounds()
 }

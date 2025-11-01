@@ -31,28 +31,26 @@ func pathAndIntensity(s string) (string, float64) {
 }
 
 func blend() error {
-	a1, a2, cfg := parseBlendFlags()
-	p1, i1 := pathAndIntensity(a1)
-	p2, i2 := pathAndIntensity(a2)
+	opt := parseBlendOpts()
 
-	c1, err := cube.LoadFile(p1)
+	c1, err := cube.LoadFile(opt.lut1)
 	if err != nil {
 		return err
 	}
 
-	c2, err := cube.LoadFile(p2)
+	c2, err := cube.LoadFile(opt.lut2)
 	if err != nil {
 		return err
 	}
 
-	c1.MustBlend(c2, i1, i2)
+	c1.MustBlend(c2, opt.ilut1, opt.ilut2)
 
-	if cfg.output == "" {
+	if opt.output == "" {
 		fmt.Println(c1)
 		return nil
 	}
 
-	f, err := os.Create(cfg.output)
+	f, err := os.Create(opt.output)
 	if err != nil {
 		return err
 	}
@@ -92,11 +90,10 @@ func loadLut(path string) (LUTApplicator, error) {
 }
 
 func apply() error {
-	lutAndIntensity, imgPath, cfg := parseApplyFlags()
-	lutPath, lutIntensity := pathAndIntensity(lutAndIntensity)
-	lut, err := loadLut(lutPath)
+	opt := parseApplyOpts()
+	lut, err := loadLut(opt.lut)
 
-	f, err := os.Open(imgPath)
+	f, err := os.Open(opt.imgPath)
 	if err != nil {
 		return err
 	}
@@ -107,19 +104,48 @@ func apply() error {
 		return err
 	}
 
-	if cfg.output == "" {
-		imgExt := filepath.Ext(imgPath)
-		imgName := imgPath[:len(imgPath)-len(imgExt)]
-		cfg.output = fmt.Sprintf("%s.prism%s", imgName, imgExt)
+	if opt.output == "" {
+		imgExt := filepath.Ext(opt.imgPath)
+		imgName := opt.imgPath[:len(opt.imgPath)-len(imgExt)]
+		opt.output = fmt.Sprintf("%s.prism%s", imgName, imgExt)
 	}
 
-	res := lut.ApplyScaled(img, lutIntensity)
-	outf, err := os.Create(cfg.output)
+	res := lut.ApplyScaled(img, opt.lutIntensity)
+	outf, err := os.Create(opt.output)
 	if err != nil {
 		return err
 	}
 	defer outf.Close()
 	return encodeImg(format, outf, res)
+}
+
+func convert() error {
+	opt := parseConvertOpts()
+	lutExt := filepath.Ext(opt.lut)
+	outExt := filepath.Ext(opt.output)
+
+	switch {
+	case lutExt == ".cube" && outExt == ".png":
+		c, err := cube.LoadFile(opt.lut)
+		if err != nil {
+			return err
+		}
+
+		id := hald.Identity(c.LUT3Dsize)
+		img := c.Apply(id)
+
+		f, err := os.Create(opt.output)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return png.Encode(f, img)
+
+	case lutExt == ".png" && outExt == ".cube":
+		fallthrough
+	default:
+		return fmt.Errorf("unsupported conversion from %q to %q", lutExt, outExt)
+	}
 }
 
 func check(err error) {
@@ -140,38 +166,65 @@ func main() {
 		check(blend())
 	case "apply":
 		check(apply())
+	case "convert":
+		check(convert())
 	default:
 		fmt.Printf("unsupported command %q", cmd)
 	}
 }
 
-type applycfg struct {
+type convertOpt struct {
+	lut    string
 	output string
 }
 
-func parseApplyFlags() (lut, image string, cfg applycfg) {
-	cmd := flag.NewFlagSet("apply", flag.ExitOnError)
-	cmd.StringVar(&cfg.output, "o", "", "Write the output in the given file")
-	cmd.StringVar(&cfg.output, "out", "", "Write the output in the given file")
-	cmd.Parse(os.Args[2:])
+func parseConvertOpts() (opt convertOpt) {
+	if len(os.Args) < 4 {
+		// TODO: print usage.
+		os.Exit(1)
+	}
 
-	return cmd.Arg(0), cmd.Arg(1), cfg
+	return convertOpt{os.Args[2], os.Args[3]}
 }
 
-type blendcfg struct {
+type applyOpt struct {
+	imgPath      string
+	lut          string
+	lutIntensity float64
+	output       string
+}
+
+func parseApplyOpts() (opt applyOpt) {
+	cmd := flag.NewFlagSet("apply", flag.ExitOnError)
+	cmd.StringVar(&opt.output, "o", "", "Write the output in the given file")
+	cmd.StringVar(&opt.output, "out", "", "Write the output in the given file")
+	cmd.Parse(os.Args[2:])
+
+	opt.lut, opt.lutIntensity = pathAndIntensity(cmd.Arg(0))
+	opt.imgPath = cmd.Arg(1)
+	return
+}
+
+type blendOpt struct {
 	clamp  bool
 	output string
+	lut1   string
+	lut2   string
+	ilut1  float64
+	ilut2  float64
 }
 
-func parseBlendFlags() (lut1, lut2 string, cfg blendcfg) {
+func parseBlendOpts() (opt blendOpt) {
 	cmd := flag.NewFlagSet("blend", flag.ExitOnError)
-	cmd.BoolVar(&cfg.clamp, "c", true, "Clamp the blended LUT")
-	cmd.BoolVar(&cfg.clamp, "clamp", true, "Clamp the blended LUT (same as -c)")
-	cmd.StringVar(&cfg.output, "o", "", "Write the output in the given file")
-	cmd.StringVar(&cfg.output, "out", "", "Write the output in the given file")
+	cmd.BoolVar(&opt.clamp, "c", true, "Clamp the blended LUT")
+	cmd.BoolVar(&opt.clamp, "clamp", true, "Clamp the blended LUT (same as -c)")
+	cmd.StringVar(&opt.output, "o", "", "Write the output in the given file")
+	cmd.StringVar(&opt.output, "out", "", "Write the output in the given file")
 	cmd.Parse(os.Args[2:])
 
-	return cmd.Arg(0), cmd.Arg(1), cfg
+	opt.lut1, opt.ilut1 = pathAndIntensity(cmd.Arg(0))
+	opt.lut2, opt.ilut2 = pathAndIntensity(cmd.Arg(1))
+	return
 }
 
 func usage() {
