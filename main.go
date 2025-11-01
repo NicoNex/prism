@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -197,9 +196,30 @@ func check(err error) {
 	}
 }
 
+func help() error {
+	if len(os.Args) < 3 {
+		usageHelp()
+		return nil
+	}
+
+	switch cmd := os.Args[2]; cmd {
+	case "apply":
+		usageApply()
+	case "convert":
+		usageConvert()
+	case "blend":
+		usageBlend()
+	case "help":
+		usageHelp()
+	default:
+		usageGeneral()
+	}
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		usage()
+		usageGeneral()
 		os.Exit(1)
 	}
 
@@ -210,71 +230,11 @@ func main() {
 		check(apply())
 	case "convert":
 		check(convert())
+	case "help":
+		check(help())
 	default:
-		fmt.Printf("unsupported command %q", cmd)
+		fmt.Fprintf(os.Stderr, "unsupported command %q\n", cmd)
+		usageGeneral()
+		os.Exit(1)
 	}
-}
-
-type convertOpt struct {
-	lut    string
-	output string
-	title  string
-}
-
-func parseConvertOpts() (opt convertOpt) {
-	cmd := flag.NewFlagSet("convert", flag.ExitOnError)
-	cmd.StringVar(&opt.title, "t", "", "Specify the title to use for the generated lut")
-	cmd.StringVar(&opt.title, "title", "", "Specify the title to use for the generated lut (same as -t)")
-	cmd.Parse(os.Args[2:])
-
-	opt.lut = cmd.Arg(0)
-	opt.output = cmd.Arg(1)
-	return
-}
-
-type applyOpt struct {
-	imgPath      string
-	lut          string
-	lutIntensity float64
-	output       string
-}
-
-func parseApplyOpts() (opt applyOpt) {
-	cmd := flag.NewFlagSet("apply", flag.ExitOnError)
-	cmd.StringVar(&opt.output, "o", "", "Write the output in the given file")
-	cmd.StringVar(&opt.output, "out", "", "Write the output in the given file")
-	cmd.Parse(os.Args[2:])
-
-	opt.lut, opt.lutIntensity = pathAndIntensity(cmd.Arg(0))
-	opt.imgPath = cmd.Arg(1)
-	return
-}
-
-type blendOpt struct {
-	clamp  bool
-	output string
-	title  string
-	lut1   string
-	lut2   string
-	ilut1  float64
-	ilut2  float64
-}
-
-func parseBlendOpts() (opt blendOpt) {
-	cmd := flag.NewFlagSet("blend", flag.ExitOnError)
-	cmd.BoolVar(&opt.clamp, "c", true, "Clamp the blended LUT")
-	cmd.BoolVar(&opt.clamp, "clamp", true, "Clamp the blended LUT (same as -c)")
-	cmd.StringVar(&opt.output, "o", "", "Write the output in the given file")
-	cmd.StringVar(&opt.output, "out", "", "Write the output in the given file (same as -o)")
-	cmd.StringVar(&opt.title, "t", "", "Specify the title to use for the generated lut")
-	cmd.StringVar(&opt.title, "title", "", "Specify the title to use for the generated lut (same as -t)")
-	cmd.Parse(os.Args[2:])
-
-	opt.lut1, opt.ilut1 = pathAndIntensity(cmd.Arg(0))
-	opt.lut2, opt.ilut2 = pathAndIntensity(cmd.Arg(1))
-	return
-}
-
-func usage() {
-	fmt.Println(`Usage coming soon!`)
 }
