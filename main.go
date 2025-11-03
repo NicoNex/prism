@@ -82,7 +82,7 @@ func encodeImg(format string, out io.Writer, img *image.RGBA) error {
 }
 
 func loadLut(path string) (LUTApplicator, error) {
-	switch lutExt := filepath.Ext(path); lutExt {
+	switch lutExt := strings.ToLower(filepath.Ext(path)); lutExt {
 	case ".cube":
 		return cube.LoadFile(path)
 
@@ -126,8 +126,8 @@ func apply() error {
 
 func convert() error {
 	opt := parseConvertOpts()
-	lutExt := filepath.Ext(opt.lut)
-	outExt := filepath.Ext(opt.output)
+	lutExt := strings.ToLower(filepath.Ext(opt.lut))
+	outExt := strings.ToLower(filepath.Ext(opt.output))
 
 	switch {
 	case lutExt == ".cube" && outExt == ".png":
@@ -167,9 +167,9 @@ func convert() error {
 		}
 
 		// Sample the HALD at each CUBE position
-		for b := 0; b < lutSize; b++ {
-			for g := 0; g < lutSize; g++ {
-				for r := 0; r < lutSize; r++ {
+		for b := range lutSize {
+			for g := range lutSize {
+				for r := range lutSize {
 					idx := r + g*lutSize + b*lutSize*lutSize
 
 					s := &c.Samples[idx]
