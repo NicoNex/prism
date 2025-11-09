@@ -388,7 +388,7 @@ func (c Cube) processRowScaled(img image.Image, out *image.RGBA, bounds image.Re
 
 func Load(r io.Reader) (Cube, error) {
 	var (
-		c       Cube
+		c       = Cube{DomainMax: Sample{1, 1, 1}}
 		scanner = bufio.NewScanner(r)
 	)
 
