@@ -19,6 +19,7 @@ type HALD struct {
 var (
 	ErrInvalidDimensions = errors.New("invalid HALD image dimensions")
 	ErrNilImage          = errors.New("image is nil")
+	ErrDifferentLevels   = errors.New("different HALD levels")
 )
 
 // newHALD creates a HALD from an image after validating dimensions
@@ -189,6 +190,57 @@ func (h HALD) processRowScaled(img image.Image, out *image.RGBA, bounds image.Re
 			A: uint8(a / 257), // Convert from uint32 to uint8
 		})
 	}
+}
+
+// Blend does a weighted blend of two HALDs using the two intensities
+// i1 and i2 provided in input.
+func (h *HALD) Blend(h2 HALD, i1, i2 float64) (*HALD, error) {
+	// Validate levels match
+	if h.level != h2.level {
+		return h, ErrDifferentLevels
+	}
+
+	bounds := h.Image.Bounds()
+	blended := image.NewRGBA(bounds)
+
+	total := i1 + i2
+	w1 := i1 / total
+	w2 := i2 / total
+
+	// Blend each pixel
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c1 := h.Image.At(x, y)
+			c2 := h2.Image.At(x, y)
+
+			r1, g1, b1 := colorToFloat64(c1)
+			r2, g2, b2 := colorToFloat64(c2)
+
+			// Blend the colors
+			r := r1*w1 + r2*w2
+			g := g1*w1 + g2*w2
+			b := b1*w1 + b2*w2
+
+			blended.SetRGBA(x, y, color.RGBA{
+				R: uint8(r * 255),
+				G: uint8(g * 255),
+				B: uint8(b * 255),
+				A: 255,
+			})
+		}
+	}
+
+	result, err := newHALD(blended)
+	if err != nil {
+		return h, err
+	}
+
+	return &result, nil
+}
+
+// WriteTo writes the HALD image as PNG to the given writer
+func (h HALD) WriteTo(w io.Writer) (int64, error) {
+	return 0, png.Encode(w, h.Image)
 }
 
 // Identity creates a neutral/identity HALD of the given level.
