@@ -19,6 +19,10 @@ type applyOpt struct {
 	output       string
 }
 
+type identityOpt struct {
+	output string
+}
+
 type blendOpt struct {
 	clamp  bool
 	output string
@@ -69,14 +73,25 @@ func parseBlendOpts() (opt blendOpt) {
 	return
 }
 
+func parseIdentityOpts() (opt identityOpt) {
+	cmd := flag.NewFlagSet("identity", flag.ExitOnError)
+	cmd.StringVar(&opt.output, "o", "prism-identity.png", "Write the output in the given file")
+	cmd.StringVar(&opt.output, "out", "prism-identity.png", "Write the output in the given file")
+	cmd.Usage = usageIdentity
+	cmd.Parse(os.Args[2:])
+
+	return
+}
+
 func usageGeneral() {
 	fmt.Fprintf(os.Stderr, `Usage: %s COMMAND [OPTIONS] ARGS
 
 Commands:
-  apply    Apply a LUT to an image
-  convert  Convert between LUT formats (CUBE <-> PNG HALD)
-  blend    Blend two LUTs together
-  help     Display help for a command
+  apply     Apply a LUT to an image
+  convert   Convert between LUT formats (CUBE <-> PNG HALD)
+  blend     Blend two LUTs together
+  identity  Generate an identity PNG HALD LUT
+  help      Display help for a command
 
 Use '%s help COMMAND' for more information on a command.
 `, os.Args[0], os.Args[0])
@@ -97,6 +112,20 @@ Arguments:
 Examples:
   %s apply lut.cube image.png
   %s apply -o output.jpg lut.png image.jpg
+`, os.Args[0], os.Args[0], os.Args[0])
+}
+
+func usageIdentity() {
+	fmt.Fprintf(os.Stderr, `Usage: %s identity [OPTIONS]
+
+Generate an identity PNG HALD LUT.
+
+Options:
+  -o, --out FILE    Write output to FILE (default: prism-identity.png)
+
+Examples:
+  %s identity
+  %s identity -o identity.png
 `, os.Args[0], os.Args[0], os.Args[0])
 }
 
@@ -150,11 +179,12 @@ func usageHelp() {
 Display help for a command.
 
 Arguments:
-  COMMAND    Command to get help for (apply, convert, or blend)
+  COMMAND    Command to get help for (apply, convert, blend, or identity)
 
 Examples:
   %s help
   %s help apply
   %s help convert
-`, os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+  %s help identity
+`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }

@@ -263,6 +263,18 @@ func convert() error {
 	}
 }
 
+func identity() error {
+	opt := parseIdentityOpts()
+
+	f, err := os.Create(opt.output)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return png.Encode(f, hald.Identity(12))
+}
+
 func check(err error) {
 	if err != nil {
 		fmt.Println(err)
@@ -283,6 +295,8 @@ func help() error {
 		usageConvert()
 	case "blend":
 		usageBlend()
+	case "identity":
+		usageIdentity()
 	case "help":
 		usageHelp()
 	default:
@@ -304,6 +318,8 @@ func main() {
 		check(apply())
 	case "convert":
 		check(convert())
+	case "identity":
+		check(identity())
 	case "help":
 		check(help())
 	default:
