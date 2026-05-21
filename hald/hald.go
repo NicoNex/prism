@@ -22,99 +22,33 @@ var (
 	ErrDifferentLevels   = errors.New("different HALD levels")
 )
 
-// newHALD creates a HALD from an image after validating dimensions
-func newHALD(img image.Image) (HALD, error) {
-	if img == nil {
-		return HALD{}, ErrNilImage
+type sample struct {
+	R, G, B float64
+}
+
+func interpolateSamples(s1, s2 sample, t float64) sample {
+	return sample{
+		R: s1.R + t*(s2.R-s1.R),
+		G: s1.G + t*(s2.G-s1.G),
+		B: s1.B + t*(s2.B-s1.B),
 	}
-	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if w != h {
-		return HALD{}, ErrInvalidDimensions
+}
+
+func blendSamples(s1, s2 sample, w1, w2 float64) sample {
+	return sample{
+		R: s1.R*w1 + s2.R*w2,
+		G: s1.G*w1 + s2.G*w2,
+		B: s1.B*w1 + s2.B*w2,
 	}
+}
 
-	// level = round(cuberoot(width))
-	levelF := math.Round(math.Cbrt(float64(w)))
-	level := int(levelF)
-	if level*level*level != w {
-		return HALD{}, ErrInvalidDimensions
+func colorSample(c color.Color) sample {
+	r, g, b, _ := c.RGBA()
+	return sample{
+		R: float64(r) / 65535.0,
+		G: float64(g) / 65535.0,
+		B: float64(b) / 65535.0,
 	}
-
-	return HALD{Image: img, level: level}, nil
-}
-
-// sample retrieves the color at the given 3D cube coordinates
-// r, g, b should be in range [0, level-1]
-func (h HALD) sample(r, g, b int) color.Color {
-	N := h.level
-	cube := N * N
-	size := N * N * N
-
-	idx := b*cube*cube + g*cube + r
-	x := idx % size
-	y := idx / size
-
-	min := h.Image.Bounds().Min
-	return h.Image.At(min.X+x, min.Y+y)
-}
-
-// colorToFloat64 converts an image color to float64 RGB values in range [0, 1]
-func colorToFloat64(c color.Color) (r, g, b float64) {
-	rVal, gVal, bVal, _ := c.RGBA()
-	// Convert from uint32 (0-65535) to float64 (0-1)
-	return float64(rVal) / 65535.0, float64(gVal) / 65535.0, float64(bVal) / 65535.0
-}
-
-// interpolateSamples linearly interpolates between two colors
-func interpolateSamples(c1, c2 color.Color, t float64) (r, g, b float64) {
-	r1, g1, b1 := colorToFloat64(c1)
-	r2, g2, b2 := colorToFloat64(c2)
-
-	return r1 + t*(r2-r1), g1 + t*(g2-g1), b1 + t*(b2-b1)
-}
-
-// Interpolate performs trilinear interpolation in the 3D HALD LUT
-func (h HALD) Interpolate(r, g, b float64) (float64, float64, float64) {
-	cubeF := float64(h.level*h.level - 1) // N² - 1
-
-	rIdx := r * cubeF
-	gIdx := g * cubeF
-	bIdx := b * cubeF
-
-	r0 := int(math.Floor(rIdx))
-	r1 := min(r0+1, h.level*h.level-1)
-	g0 := int(math.Floor(gIdx))
-	g1 := min(g0+1, h.level*h.level-1)
-	b0 := int(math.Floor(bIdx))
-	b1 := min(b0+1, h.level*h.level-1)
-
-	rFrac := rIdx - float64(r0)
-	gFrac := gIdx - float64(g0)
-	bFrac := bIdx - float64(b0)
-
-	c000 := h.sample(r0, g0, b0)
-	c001 := h.sample(r0, g0, b1)
-	c010 := h.sample(r0, g1, b0)
-	c011 := h.sample(r0, g1, b1)
-	c100 := h.sample(r1, g0, b0)
-	c101 := h.sample(r1, g0, b1)
-	c110 := h.sample(r1, g1, b0)
-	c111 := h.sample(r1, g1, b1)
-
-	c00r, c00g, c00b := interpolateSamples(c000, c100, rFrac)
-	c01r, c01g, c01b := interpolateSamples(c001, c101, rFrac)
-	c10r, c10g, c10b := interpolateSamples(c010, c110, rFrac)
-	c11r, c11g, c11b := interpolateSamples(c011, c111, rFrac)
-
-	c0r, c0g, c0b := lerp(c00r, c00g, c00b, c10r, c10g, c10b, gFrac)
-	c1r, c1g, c1b := lerp(c01r, c01g, c01b, c11r, c11g, c11b, gFrac)
-
-	return lerp(c0r, c0g, c0b, c1r, c1g, c1b, bFrac)
-}
-
-// lerp linearly interpolates between two RGB values
-func lerp(r1, g1, b1, r2, g2, b2, t float64) (float64, float64, float64) {
-	return r1 + t*(r2-r1), g1 + t*(g2-g1), b1 + t*(b2-b1)
 }
 
 func min[T int | float64](a, b T) T {
@@ -131,166 +65,192 @@ func max[T int | float64](a, b T) T {
 	return b
 }
 
-// Apply applies the HALD LUT to an image with full intensity (1.0)
+func newHALD(img image.Image) (HALD, error) {
+	if img == nil {
+		return HALD{}, ErrNilImage
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w != h {
+		return HALD{}, ErrInvalidDimensions
+	}
+
+	level := int(math.Round(math.Cbrt(float64(w))))
+	if level*level*level != w {
+		return HALD{}, ErrInvalidDimensions
+	}
+
+	return HALD{Image: img, level: level}, nil
+}
+
+func (h HALD) Level() int {
+	return h.level
+}
+
+func (h HALD) sample(r, g, b int) sample {
+	cells := h.level * h.level          // samples per axis (N²)
+	side := h.level * h.level * h.level // image side (N³)
+
+	idx := b*cells*cells + g*cells + r
+	origin := h.Image.Bounds().Min
+	return colorSample(h.Image.At(origin.X+idx%side, origin.Y+idx/side))
+}
+
+func (h HALD) interpolate(r, g, b float64) sample {
+	size := h.level*h.level - 1
+	sizeF := float64(size)
+
+	rIdx := max(0.0, min(sizeF, r*sizeF))
+	gIdx := max(0.0, min(sizeF, g*sizeF))
+	bIdx := max(0.0, min(sizeF, b*sizeF))
+
+	r0, g0, b0 := int(rIdx), int(gIdx), int(bIdx)
+	r1, g1, b1 := min(r0+1, size), min(g0+1, size), min(b0+1, size)
+
+	rFrac := rIdx - float64(r0)
+	gFrac := gIdx - float64(g0)
+	bFrac := bIdx - float64(b0)
+
+	return interpolateSamples(
+		interpolateSamples(
+			interpolateSamples(h.sample(r0, g0, b0), h.sample(r1, g0, b0), rFrac),
+			interpolateSamples(h.sample(r0, g1, b0), h.sample(r1, g1, b0), rFrac),
+			gFrac,
+		),
+		interpolateSamples(
+			interpolateSamples(h.sample(r0, g0, b1), h.sample(r1, g0, b1), rFrac),
+			interpolateSamples(h.sample(r0, g1, b1), h.sample(r1, g1, b1), rFrac),
+			gFrac,
+		),
+		bFrac,
+	)
+}
+
+// Interpolate performs trilinear interpolation in the 3D HALD LUT.
+func (h HALD) Interpolate(r, g, b float64) (float64, float64, float64) {
+	s := h.interpolate(r, g, b)
+	return s.R, s.G, s.B
+}
+
 func (h HALD) Apply(img image.Image) *image.RGBA {
 	return h.ApplyScaled(img, 1.0)
 }
 
-// ApplyScaled applies the HALD LUT to an image with adjustable intensity
 func (h HALD) ApplyScaled(img image.Image, intensity float64) *image.RGBA {
 	bounds := img.Bounds()
 	out := image.NewRGBA(bounds)
 
-	// Clamp intensity to [0, 1]
 	intensity = max(0, min(1, intensity))
 
 	var wg sync.WaitGroup
-
-	// Process each row in parallel
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		wg.Add(1)
-		go func(y int) {
-			defer wg.Done()
-			h.processRowScaled(img, out, bounds, y, intensity)
-		}(y)
+		wg.Go(func() {
+			h.applyRow(img, out, bounds, y, intensity)
+		})
 	}
-
 	wg.Wait()
 	return out
 }
 
-// processRowScaled processes a single row of the image with intensity blending
-func (h HALD) processRowScaled(img image.Image, out *image.RGBA, bounds image.Rectangle, y int, intensity float64) {
+func (h HALD) applyRow(img image.Image, out *image.RGBA, bounds image.Rectangle, y int, intensity float64) {
 	for x := bounds.Min.X; x < bounds.Max.X; x++ {
-		r, g, b, a := img.At(x, y).RGBA()
+		r32, g32, b32, a32 := img.At(x, y).RGBA()
 
-		// Convert from uint32 (0-65535) to float64 (0-1)
-		rNorm := float64(r) / 65535.0
-		gNorm := float64(g) / 65535.0
-		bNorm := float64(b) / 65535.0
+		r := float64(r32) / 65535.0
+		g := float64(g32) / 65535.0
+		b := float64(b32) / 65535.0
 
-		// Apply HALD using trilinear interpolation
-		resultR, resultG, resultB := h.Interpolate(rNorm, gNorm, bNorm)
+		s := h.interpolate(r, g, b)
 
-		// Blend between original (identity) and HALD result
-		blendedR := rNorm*(1-intensity) + resultR*intensity
-		blendedG := gNorm*(1-intensity) + resultG*intensity
-		blendedB := bNorm*(1-intensity) + resultB*intensity
+		br := max(0, min(1, r+(s.R-r)*intensity))
+		bg := max(0, min(1, g+(s.G-g)*intensity))
+		bb := max(0, min(1, b+(s.B-b)*intensity))
 
-		// Clamp to [0, 1]
-		blendedR = max(0, min(1, blendedR))
-		blendedG = max(0, min(1, blendedG))
-		blendedB = max(0, min(1, blendedB))
-
-		// Convert back to uint8
 		out.SetRGBA(x, y, color.RGBA{
-			R: uint8(blendedR * 255),
-			G: uint8(blendedG * 255),
-			B: uint8(blendedB * 255),
-			A: uint8(a / 257), // Convert from uint32 to uint8
+			R: uint8(br * 255),
+			G: uint8(bg * 255),
+			B: uint8(bb * 255),
+			A: uint8(a32 / 257),
 		})
 	}
 }
 
-// Blend does a weighted blend of two HALDs using the two intensities
-// i1 and i2 provided in input.
-func (h *HALD) Blend(h2 HALD, i1, i2 float64) (*HALD, error) {
-	// Validate levels match
+// Blend replaces h with the weighted blend of h and h2 using intensities i1, i2.
+func (h *HALD) Blend(h2 HALD, i1, i2 float64) error {
 	if h.level != h2.level {
-		return h, ErrDifferentLevels
+		return ErrDifferentLevels
 	}
+
+	total := i1 + i2
+	if total == 0 {
+		return nil
+	}
+	w1 := i1 / total
+	w2 := i2 / total
 
 	bounds := h.Image.Bounds()
 	blended := image.NewRGBA(bounds)
 
-	total := i1 + i2
-	w1 := i1 / total
-	w2 := i2 / total
-
-	// Blend each pixel
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			c1 := h.Image.At(x, y)
-			c2 := h2.Image.At(x, y)
-
-			r1, g1, b1 := colorToFloat64(c1)
-			r2, g2, b2 := colorToFloat64(c2)
-
-			// Blend the colors
-			r := r1*w1 + r2*w2
-			g := g1*w1 + g2*w2
-			b := b1*w1 + b2*w2
-
+			s := blendSamples(
+				colorSample(h.Image.At(x, y)),
+				colorSample(h2.Image.At(x, y)),
+				w1, w2,
+			)
 			blended.SetRGBA(x, y, color.RGBA{
-				R: uint8(r * 255),
-				G: uint8(g * 255),
-				B: uint8(b * 255),
+				R: uint8(s.R * 255),
+				G: uint8(s.G * 255),
+				B: uint8(s.B * 255),
 				A: 255,
 			})
 		}
 	}
 
-	result, err := newHALD(blended)
-	if err != nil {
-		return h, err
-	}
-
-	return &result, nil
+	h.Image = blended
+	return nil
 }
 
-// WriteTo writes the HALD image as PNG to the given writer
 func (h HALD) WriteTo(w io.Writer) (int64, error) {
 	return 0, png.Encode(w, h.Image)
 }
 
-// Identity creates a neutral/identity HALD of the given level.
-// An identity HALD returns each input color unchanged.
+// Identity creates a neutral HALD of the given level: each input color maps to itself.
 func Identity(level int) HALD {
-	N := level
-	cube := N * N     // samples per axis
-	size := N * N * N // image width & height
-	img := image.NewRGBA(image.Rect(0, 0, size, size))
-	den := float64(cube - 1)
+	cells := level * level
+	side := level * level * level
+	img := image.NewRGBA(image.Rect(0, 0, side, side))
+	den := float64(cells - 1)
 
-	for b := 0; b < cube; b++ {
-		for g := 0; g < cube; g++ {
-			for r := 0; r < cube; r++ {
-				idx := b*cube*cube + g*cube + r
-				x := idx % size
-				y := idx / size
-
-				R := uint8((float64(r) / den) * 255.0)
-				G := uint8((float64(g) / den) * 255.0)
-				B := uint8((float64(b) / den) * 255.0)
-				img.SetRGBA(x, y, color.RGBA{R: R, G: G, B: B, A: 255})
+	for b := range cells {
+		for g := range cells {
+			for r := range cells {
+				idx := b*cells*cells + g*cells + r
+				img.SetRGBA(idx%side, idx/side, color.RGBA{
+					R: uint8(float64(r) / den * 255),
+					G: uint8(float64(g) / den * 255),
+					B: uint8(float64(b) / den * 255),
+					A: 255,
+				})
 			}
 		}
 	}
-	return HALD{Image: img, level: N}
+	return HALD{Image: img, level: level}
 }
 
-// Load reads a HALD LUT from a PNG image reader
 func Load(r io.Reader) (HALD, error) {
 	img, err := png.Decode(r)
 	if err != nil {
 		return HALD{}, err
 	}
-
 	return newHALD(img)
 }
 
-// LoadFile reads a HALD LUT from a PNG file
 func LoadFile(path string) (HALD, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return HALD{}, err
 	}
 	defer f.Close()
-
 	return Load(f)
-}
-
-// Level returns the HALD level of this LUT
-func (h HALD) Level() int {
-	return h.level
 }

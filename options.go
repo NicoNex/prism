@@ -88,7 +88,7 @@ func usageGeneral() {
 
 Commands:
   apply     Apply a LUT to an image
-  convert   Convert between LUT formats (CUBE <-> PNG HALD)
+  convert   Convert between LUT formats (CUBE, PNG HALD, VLT)
   blend     Blend two LUTs together
   identity  Generate an identity PNG HALD LUT
   help      Display help for a command
@@ -100,19 +100,20 @@ Use '%s help COMMAND' for more information on a command.
 func usageApply() {
 	fmt.Fprintf(os.Stderr, `Usage: %s apply [OPTIONS] LUT IMAGE
 
-Apply a LUT (CUBE or PNG HALD) to an image.
+Apply a LUT to an image.
 
 Options:
   -o, --out FILE    Write output to FILE (default: IMAGE.prism.EXT)
 
 Arguments:
-  LUT              Path to LUT file (CUBE or PNG HALD)
+  LUT              Path to LUT file (.cube, .png HALD, or .vlt)
   IMAGE            Path to input image (PNG or JPEG)
 
 Examples:
   %s apply lut.cube image.png
   %s apply -o output.jpg lut.png image.jpg
-`, os.Args[0], os.Args[0], os.Args[0])
+  %s apply lut.vlt image.png
+`, os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }
 
 func usageIdentity() {
@@ -135,11 +136,15 @@ func usageConvert() {
 Convert between LUT formats.
 
 Supported conversions:
-  CUBE to PNG HALD    : %s convert lut.cube lut.png
-  PNG HALD to CUBE    : %s convert lut.png lut.cube
+  CUBE  -> PNG HALD  : %s convert lut.cube lut.png
+  CUBE  -> VLT       : %s convert lut.cube lut.vlt
+  PNG HALD -> CUBE   : %s convert lut.png lut.cube
+  PNG HALD -> VLT    : %s convert lut.png lut.vlt
+  VLT   -> CUBE      : %s convert lut.vlt lut.cube
+  VLT   -> PNG HALD  : %s convert lut.vlt lut.png
 
 Options:
-  -t, --title TITLE    Specify title for generated LUT (HALD->CUBE only)
+  -t, --title TITLE    Specify title for generated LUT (when output is CUBE)
 
 Arguments:
   LUT                 Path to input LUT file
@@ -147,19 +152,21 @@ Arguments:
 
 Examples:
   %s convert input.cube output.png
-  %s convert -t "My LUT" input.png output.cube
-`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+  %s convert input.cube output.vlt
+  %s convert -t "My LUT" input.vlt output.cube
+`, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }
 
 func usageBlend() {
 	fmt.Fprintf(os.Stderr, `Usage: %s blend [OPTIONS] LUT1[:INTENSITY1] LUT2[:INTENSITY2]
 
-Blend two CUBE LUTs together with optional intensity weighting.
+Blend two LUTs together with optional intensity weighting.
+Both LUTs must be the same format (.cube, .png HALD, or .vlt).
 
 Options:
   -c, --clamp         Clamp output LUT to valid range (default: true)
   -o, --out FILE      Write output to FILE
-  -t, --title TITLE   Specify title for generated LUT
+  -t, --title TITLE   Specify title for generated LUT (CUBE only)
 
 Arguments:
   LUT1[:INTENSITY1]   First LUT file with optional intensity (0-1)
@@ -167,8 +174,8 @@ Arguments:
 
 Examples:
   %s blend lut1.cube lut2.cube
-  %s blend lut1.cube:0.5 lut2.cube:0.5
-  %s blend -o output.cube lut1.cube lut2.cube
+  %s blend lut1.vlt:0.5 lut2.vlt:0.5
+  %s blend -o output.png lut1.png lut2.png
   %s blend -t "Blended" lut1.cube:0.7 lut2.cube:0.3
 `, os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }
