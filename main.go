@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -13,8 +14,11 @@ import (
 
 	"github.com/NicoNex/prism/cube"
 	"github.com/NicoNex/prism/hald"
+	"github.com/NicoNex/prism/lut"
 	"github.com/NicoNex/prism/vlt"
 )
+
+var errNoOutput = errors.New("no output file given, use -o")
 
 func pathAndIntensity(s string) (string, float64) {
 	toks := strings.Split(s, ":")
@@ -64,6 +68,18 @@ func blendCubes(opt blendOpt) error {
 	return err
 }
 
+// blendedName derives a default output path for a two-LUT blend.
+func blendedName(p1, p2 string) string {
+	ext := filepath.Ext(p1)
+	b1 := filepath.Base(p1)
+	b2 := filepath.Base(p2)
+
+	n1 := b1[:len(b1)-len(ext)]
+	n2 := b2[:len(b2)-len(ext)]
+
+	return fmt.Sprintf("%s and %s%s", n1, n2, ext)
+}
+
 func blendHALDs(opt blendOpt) error {
 	h1, err := hald.LoadFile(opt.lut1)
 	if err != nil {
@@ -80,14 +96,7 @@ func blendHALDs(opt blendOpt) error {
 	}
 
 	if opt.output == "" {
-		ext := filepath.Ext(opt.lut1)
-		b1 := filepath.Base(opt.lut1)
-		b2 := filepath.Base(opt.lut2)
-
-		n1 := b1[:len(b1)-len(ext)]
-		n2 := b2[:len(b2)-len(ext)]
-
-		opt.output = fmt.Sprintf("%s and %s%s", n1, n2, ext)
+		opt.output = blendedName(opt.lut1, opt.lut2)
 	}
 
 	f, err := os.Create(opt.output)
@@ -116,14 +125,7 @@ func blendVLTs(opt blendOpt) error {
 	}
 
 	if opt.output == "" {
-		ext := filepath.Ext(opt.lut1)
-		b1 := filepath.Base(opt.lut1)
-		b2 := filepath.Base(opt.lut2)
-
-		n1 := b1[:len(b1)-len(ext)]
-		n2 := b2[:len(b2)-len(ext)]
-
-		opt.output = fmt.Sprintf("%s and %s%s", n1, n2, ext)
+		opt.output = blendedName(opt.lut1, opt.lut2)
 	}
 
 	f, err := os.Create(opt.output)
@@ -138,6 +140,11 @@ func blendVLTs(opt blendOpt) error {
 
 func blend() error {
 	opt := parseBlendOpts()
+	if opt.lut1 == "" || opt.lut2 == "" {
+		usageBlend()
+		return errors.New("blend needs two LUTs")
+	}
+
 	ext1 := strings.ToLower(filepath.Ext(opt.lut1))
 	ext2 := strings.ToLower(filepath.Ext(opt.lut2))
 
@@ -157,12 +164,7 @@ func blend() error {
 	}
 }
 
-type LUTApplicator interface {
-	Apply(image.Image) *image.RGBA
-	ApplyScaled(image.Image, float64) *image.RGBA
-}
-
-func encodeImg(format string, out io.Writer, img *image.RGBA) error {
+func encodeImg(format string, out io.Writer, img image.Image) error {
 	switch format {
 	case "png":
 		return png.Encode(out, img)
@@ -173,38 +175,39 @@ func encodeImg(format string, out io.Writer, img *image.RGBA) error {
 	}
 }
 
-func loadLut(path string) (LUTApplicator, error) {
-	switch lutExt := strings.ToLower(filepath.Ext(path)); lutExt {
-	case ".cube":
-		return cube.LoadFile(path)
-
-	case ".png":
-		return hald.LoadFile(path)
-
-	case ".vlt":
-		return vlt.LoadFile(path)
-
-	default:
-		return nil, fmt.Errorf("unsupported lut type: %q", lutExt)
+func loadImage(path string) (image.Image, string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
 	}
+	defer f.Close()
+	return image.Decode(f)
 }
 
 func apply() error {
 	opt := parseApplyOpts()
-	lut, err := loadLut(opt.lut)
+	if len(opt.luts) == 0 || opt.imgPath == "" {
+		usageApply()
+		return errors.New("apply needs at least one LUT and an image")
+	}
+
+	interp, err := lut.ParseInterp(opt.interp)
 	if err != nil {
 		return err
 	}
 
-	f, err := os.Open(opt.imgPath)
+	img, format, err := loadImage(opt.imgPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	img, format, err := image.Decode(f)
-	if err != nil {
-		return err
+	for _, spec := range opt.luts {
+		path, intensity := pathAndIntensity(spec)
+		l, err := lut.LoadFile(path)
+		if err != nil {
+			return err
+		}
+		img = l.Apply(img, intensity, interp)
 	}
 
 	if opt.output == "" {
@@ -214,234 +217,145 @@ func apply() error {
 		opt.output = fmt.Sprintf("%s.prism%s", imgName, imgExt)
 	}
 
-	res := lut.ApplyScaled(img, opt.lutIntensity)
 	outf, err := os.Create(opt.output)
 	if err != nil {
 		return err
 	}
 	defer outf.Close()
-	return encodeImg(format, outf, res)
-}
 
-func cubeToHald(lutPath, outPath string) error {
-	c, err := cube.LoadFile(lutPath)
-	if err != nil {
+	if err := encodeImg(format, outf, img); err != nil {
 		return err
 	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return png.Encode(f, c.Apply(hald.Identity(12)))
-}
-
-func haldToCube(title, lutPath, outPath string) error {
-	hld, err := hald.LoadFile(lutPath)
-	if err != nil {
-		return err
-	}
-
-	const (
-		lutSize  = 33
-		lutSizeF = float64(lutSize - 1)
-	)
-
-	c := cube.Cube{
-		Title:     title,
-		LUT3Dsize: lutSize,
-		DomainMin: cube.Sample{R: 0, G: 0, B: 0},
-		DomainMax: cube.Sample{R: 1, G: 1, B: 1},
-		Samples:   make([]cube.Sample, lutSize*lutSize*lutSize),
-	}
-
-	if c.Title == "" {
-		lutExt := filepath.Ext(lutPath)
-		c.Title = lutPath[:len(lutPath)-len(lutExt)]
-	}
-
-	// Sample the HALD at each CUBE position
-	for b := range lutSize {
-		for g := range lutSize {
-			for r := range lutSize {
-				idx := r + g*lutSize + b*lutSize*lutSize
-				s := &c.Samples[idx]
-
-				s.R, s.G, s.B = hld.Interpolate(
-					float64(r)/lutSizeF,
-					float64(g)/lutSizeF,
-					float64(b)/lutSizeF,
-				)
-			}
-		}
-	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = c.WriteTo(f)
-	return err
-}
-
-func vltToCube(title, lutPath, outPath string) error {
-	v, err := vlt.LoadFile(lutPath)
-	if err != nil {
-		return err
-	}
-
-	c := cube.Cube{
-		Title:     title,
-		LUT3Dsize: v.LUT3Dsize,
-		DomainMin: cube.Sample{},
-		DomainMax: cube.Sample{R: 1, G: 1, B: 1},
-		Samples:   make([]cube.Sample, len(v.Samples)),
-	}
-	if c.Title == "" {
-		lutExt := filepath.Ext(lutPath)
-		c.Title = lutPath[:len(lutPath)-len(lutExt)]
-	}
-	for i, s := range v.Samples {
-		c.Samples[i] = cube.Sample{
-			R: float64(s.R) / 4095.0,
-			G: float64(s.G) / 4095.0,
-			B: float64(s.B) / 4095.0,
-		}
-	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = c.WriteTo(f)
-	return err
-}
-
-func cubeToVLT(lutPath, outPath string) error {
-	c, err := cube.LoadFile(lutPath)
-	if err != nil {
-		return err
-	}
-
-	v := vlt.VLT{
-		LUT3Dsize: c.LUT3Dsize,
-		Samples:   make([]vlt.Sample, len(c.Samples)),
-	}
-	for i, s := range c.Samples {
-		v.Samples[i] = vlt.Sample{
-			R: uint16(s.R*4095 + 0.5),
-			G: uint16(s.G*4095 + 0.5),
-			B: uint16(s.B*4095 + 0.5),
-		}
-	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = v.WriteTo(f)
-	return err
-}
-
-func vltToHald(lutPath, outPath string) error {
-	v, err := vlt.LoadFile(lutPath)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return png.Encode(f, v.Apply(hald.Identity(12)))
-}
-
-func haldToVLT(lutPath, outPath string) error {
-	hld, err := hald.LoadFile(lutPath)
-	if err != nil {
-		return err
-	}
-
-	const (
-		lutSize  = 17
-		lutSizeF = float64(lutSize - 1)
-	)
-
-	v := vlt.VLT{
-		LUT3Dsize: lutSize,
-		Samples:   make([]vlt.Sample, lutSize*lutSize*lutSize),
-	}
-
-	for b := range lutSize {
-		for g := range lutSize {
-			for r := range lutSize {
-				idx := r + g*lutSize + b*lutSize*lutSize
-				sr, sg, sb := hld.Interpolate(
-					float64(r)/lutSizeF,
-					float64(g)/lutSizeF,
-					float64(b)/lutSizeF,
-				)
-				v.Samples[idx] = vlt.Sample{
-					R: uint16(sr*4095 + 0.5),
-					G: uint16(sg*4095 + 0.5),
-					B: uint16(sb*4095 + 0.5),
-				}
-			}
-		}
-	}
-
-	f, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = v.WriteTo(f)
-	return err
+	return outf.Close()
 }
 
 func convert() error {
 	opt := parseConvertOpts()
-	lutExt := strings.ToLower(filepath.Ext(opt.lut))
-	outExt := strings.ToLower(filepath.Ext(opt.output))
-
-	switch {
-	case lutExt == ".cube" && outExt == ".png":
-		return cubeToHald(opt.lut, opt.output)
-	case lutExt == ".png" && outExt == ".cube":
-		return haldToCube(opt.title, opt.lut, opt.output)
-	case lutExt == ".vlt" && outExt == ".cube":
-		return vltToCube(opt.title, opt.lut, opt.output)
-	case lutExt == ".cube" && outExt == ".vlt":
-		return cubeToVLT(opt.lut, opt.output)
-	case lutExt == ".vlt" && outExt == ".png":
-		return vltToHald(opt.lut, opt.output)
-	case lutExt == ".png" && outExt == ".vlt":
-		return haldToVLT(opt.lut, opt.output)
-	default:
-		return fmt.Errorf("unsupported conversion from %q to %q", lutExt, outExt)
+	if opt.lut == "" || opt.output == "" {
+		usageConvert()
+		return errors.New("convert needs an input and an output LUT")
 	}
+
+	l, err := lut.LoadFile(opt.lut)
+	if err != nil {
+		return err
+	}
+	return lut.SaveFile(opt.output, l, opt.size, opt.title)
+}
+
+func compose() error {
+	opt := parseComposeOpts()
+	if len(opt.luts) < 2 {
+		usageCompose()
+		return errors.New("compose needs at least two LUTs")
+	}
+	if opt.output == "" {
+		usageCompose()
+		return errNoOutput
+	}
+
+	acc, err := lut.LoadFile(opt.luts[0])
+	if err != nil {
+		return err
+	}
+	for _, path := range opt.luts[1:] {
+		next, err := lut.LoadFile(path)
+		if err != nil {
+			return err
+		}
+		acc = lut.Compose(acc, next, opt.size)
+	}
+	return lut.SaveFile(opt.output, acc, opt.size, opt.title)
+}
+
+func invert() error {
+	opt := parseInvertOpts()
+	if opt.lut == "" {
+		usageInvert()
+		return errors.New("invert needs a LUT")
+	}
+	if opt.output == "" {
+		usageInvert()
+		return errNoOutput
+	}
+
+	l, err := lut.LoadFile(opt.lut)
+	if err != nil {
+		return err
+	}
+	return lut.SaveFile(opt.output, lut.Invert(l, opt.size), opt.size, opt.title)
+}
+
+func delog() error {
+	opt := parseDelogOpts()
+	if opt.lut == "" || opt.conv == "" {
+		usageDelog()
+		return errors.New("delog needs a LUT and a conversion LUT (-c)")
+	}
+	if opt.output == "" {
+		usageDelog()
+		return errNoOutput
+	}
+
+	look, err := lut.LoadFile(opt.lut)
+	if err != nil {
+		return err
+	}
+	conv, err := lut.LoadFile(opt.conv)
+	if err != nil {
+		return err
+	}
+
+	// The look wants log input, so feed it display-to-log first.
+	return lut.SaveFile(opt.output, lut.Compose(lut.Invert(conv, opt.size), look, opt.size), opt.size, opt.title)
+}
+
+func extract() error {
+	opt := parseExtractOpts()
+	if opt.source == "" || opt.graded == "" {
+		usageExtract()
+		return errors.New("extract needs a source and a graded image")
+	}
+	if opt.output == "" {
+		usageExtract()
+		return errNoOutput
+	}
+
+	src, _, err := loadImage(opt.source)
+	if err != nil {
+		return err
+	}
+	graded, _, err := loadImage(opt.graded)
+	if err != nil {
+		return err
+	}
+
+	// For HALD output -s is a level, so the lattice it stands for is level².
+	fit, save := opt.size, opt.size
+	if strings.ToLower(filepath.Ext(opt.output)) == ".png" {
+		if save <= 0 {
+			save = 8
+		}
+		fit = save * save
+	} else if fit <= 0 {
+		fit = 33
+	}
+
+	l, err := lut.Extract(src, graded, fit, opt.smoothing)
+	if err != nil {
+		return err
+	}
+	return lut.SaveFile(opt.output, l, save, opt.title)
 }
 
 func identity() error {
 	opt := parseIdentityOpts()
-
-	f, err := os.Create(opt.output)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return png.Encode(f, hald.Identity(12))
+	return lut.SaveFile(opt.output, lut.New(2), opt.level, "")
 }
 
 func check(err error) {
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -457,6 +371,14 @@ func help() error {
 		usageApply()
 	case "convert":
 		usageConvert()
+	case "compose":
+		usageCompose()
+	case "invert":
+		usageInvert()
+	case "delog":
+		usageDelog()
+	case "extract":
+		usageExtract()
 	case "blend":
 		usageBlend()
 	case "identity":
@@ -482,6 +404,14 @@ func main() {
 		check(apply())
 	case "convert":
 		check(convert())
+	case "compose":
+		check(compose())
+	case "invert":
+		check(invert())
+	case "delog":
+		check(delog())
+	case "extract":
+		check(extract())
 	case "identity":
 		check(identity())
 	case "help":
