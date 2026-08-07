@@ -28,7 +28,9 @@ func solveSize(size, fallback int) int {
 // size is the output lattice size; 0 keeps the larger of the two inputs.
 func Compose(a, b *LUT, size int) *LUT {
 	if size <= 0 {
-		size = defaultSize(max(a.Size, b.Size), 65, 65)
+		// The composed function bends wherever either input bends, so it needs
+		// a denser lattice than either to be represented without losing detail.
+		size = min(2*max(a.Size, b.Size)-1, MaxSolveSize)
 	}
 	if size < 2 {
 		size = 2

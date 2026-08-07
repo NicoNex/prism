@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type convertOpt struct {
@@ -66,6 +67,52 @@ type extractOpt struct {
 	smoothing float64
 }
 
+// permute reorders args so that flags come before positional arguments.
+// Go's flag package stops parsing at the first positional, which would make
+// 'prism invert lut.cube -o out.cube' silently ignore -o. Everything after a
+// literal "--" is left alone.
+func permute(cmd *flag.FlagSet, args []string) []string {
+	var flags, rest []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		if arg == "--" {
+			rest = append(rest, args[i+1:]...)
+			break
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			rest = append(rest, arg)
+			continue
+		}
+
+		flags = append(flags, arg)
+		name := strings.TrimLeft(arg, "-")
+		if strings.ContainsRune(name, '=') {
+			continue // value is already attached
+		}
+
+		f := cmd.Lookup(name)
+		if f == nil {
+			continue // unknown flag: let flag.Parse report it
+		}
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			continue // takes no value
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+
+	return append(flags, rest...)
+}
+
+// parse applies the flag set to the command's arguments, flags in any position.
+func parse(cmd *flag.FlagSet) {
+	cmd.Parse(permute(cmd, os.Args[2:]))
+}
+
 // stringVar registers the same target under a short and a long flag name.
 func stringVar(cmd *flag.FlagSet, p *string, short, long, def, usage string) {
 	cmd.StringVar(p, short, def, usage)
@@ -82,7 +129,7 @@ func parseConvertOpts() (opt convertOpt) {
 	stringVar(cmd, &opt.title, "t", "title", "", "Specify the title to use for the generated lut")
 	intVar(cmd, &opt.size, "s", "size", 0, "Output lattice size (HALD level for .png); 0 picks a default")
 	cmd.Usage = usageConvert
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	opt.lut = cmd.Arg(0)
 	opt.output = cmd.Arg(1)
@@ -94,7 +141,7 @@ func parseApplyOpts() (opt applyOpt) {
 	stringVar(cmd, &opt.output, "o", "out", "", "Write the output in the given file")
 	stringVar(cmd, &opt.interp, "i", "interp", "tetra", "Interpolation: tetra or tri")
 	cmd.Usage = usageApply
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	args := cmd.Args()
 	if len(args) < 2 {
@@ -112,7 +159,7 @@ func parseBlendOpts() (opt blendOpt) {
 	stringVar(cmd, &opt.output, "o", "out", "", "Write the output in the given file")
 	stringVar(cmd, &opt.title, "t", "title", "", "Specify the title to use for the generated lut")
 	cmd.Usage = usageBlend
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	opt.lut1, opt.ilut1 = pathAndIntensity(cmd.Arg(0))
 	opt.lut2, opt.ilut2 = pathAndIntensity(cmd.Arg(1))
@@ -125,7 +172,7 @@ func parseComposeOpts() (opt composeOpt) {
 	stringVar(cmd, &opt.title, "t", "title", "", "Specify the title to use for the generated lut")
 	intVar(cmd, &opt.size, "s", "size", 0, "Output lattice size (HALD level for .png); 0 picks a default")
 	cmd.Usage = usageCompose
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	opt.luts = cmd.Args()
 	return
@@ -137,7 +184,7 @@ func parseInvertOpts() (opt invertOpt) {
 	stringVar(cmd, &opt.title, "t", "title", "", "Specify the title to use for the generated lut")
 	intVar(cmd, &opt.size, "s", "size", 0, "Output lattice size (HALD level for .png); 0 picks a default")
 	cmd.Usage = usageInvert
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	opt.lut = cmd.Arg(0)
 	return
@@ -150,7 +197,7 @@ func parseDelogOpts() (opt delogOpt) {
 	stringVar(cmd, &opt.title, "t", "title", "", "Specify the title to use for the generated lut")
 	intVar(cmd, &opt.size, "s", "size", 0, "Output lattice size (HALD level for .png); 0 picks a default")
 	cmd.Usage = usageDelog
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	opt.lut = cmd.Arg(0)
 	return
@@ -164,7 +211,7 @@ func parseExtractOpts() (opt extractOpt) {
 	cmd.Float64Var(&opt.smoothing, "r", 0, "Smoothing weight; higher is smoother (default 1)")
 	cmd.Float64Var(&opt.smoothing, "smooth", 0, "Smoothing weight; higher is smoother (same as -r)")
 	cmd.Usage = usageExtract
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	opt.source = cmd.Arg(0)
 	opt.graded = cmd.Arg(1)
@@ -176,7 +223,7 @@ func parseIdentityOpts() (opt identityOpt) {
 	stringVar(cmd, &opt.output, "o", "out", "prism-identity.png", "Write the output in the given file")
 	intVar(cmd, &opt.level, "s", "size", 12, "HALD level (lattice is level² per axis)")
 	cmd.Usage = usageIdentity
-	cmd.Parse(os.Args[2:])
+	parse(cmd)
 
 	return
 }
