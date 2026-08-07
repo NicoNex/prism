@@ -208,7 +208,7 @@ func parseExtractOpts() (opt extractOpt) {
 	stringVar(cmd, &opt.output, "o", "out", "", "Write the output in the given file")
 	stringVar(cmd, &opt.title, "t", "title", "", "Specify the title to use for the generated lut")
 	intVar(cmd, &opt.size, "s", "size", 0, "Output lattice size, or HALD level for .png (default: 33 / level 8)")
-	cmd.Float64Var(&opt.smoothing, "r", 0, "Smoothing weight; higher is smoother (default 1)")
+	cmd.Float64Var(&opt.smoothing, "r", 0, "Smoothing weight; higher is smoother (default 0.05)")
 	cmd.Float64Var(&opt.smoothing, "smooth", 0, "Smoothing weight; higher is smoother (same as -r)")
 	cmd.Usage = usageExtract
 	parse(cmd)
@@ -405,7 +405,7 @@ Options:
   -o, --out FILE       Write output to FILE (required)
   -t, --title TITLE    Specify title for generated LUT
   -s, --size SIZE      Output lattice size, HALD level for .png (default: 33)
-  -r, --smooth W       Smoothing weight, higher is smoother (default: 1)
+  -r, --smooth W       Smoothing weight, higher is smoother (default: 0.05)
 
 Arguments:
   SOURCE               The ungraded image
